@@ -1,5 +1,6 @@
-use crate::executor::{Task, TaskId};
+use crate::executor::{MemoryAccessFuture, Task};
 use arr_macro::arr;
+use core::arch::x86_64::{_mm_prefetch, _MM_HINT_T0};
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use std::alloc::{alloc, Layout};
@@ -42,7 +43,7 @@ impl Cell {
 }
 
 lazy_static! {
-    static ref WORKLOADS: [Box<ArrayList>; 4] = arr![ArrayList::new(); 4];
+    static ref WORKLOADS: [Box<ArrayList>; REPETITION] = arr![ArrayList::new(); 4];
 }
 
 #[repr(C)]
@@ -125,7 +126,7 @@ impl Traveller for AsyncTraversal {
             self.executor
                 .spawn(Task::new(AsyncTraversal::traverse_one(&workloads[i])));
         }
-        todo!()
+        self.executor.run_ready_task()
     }
 
     fn get_name(&self) -> &'static str {
@@ -134,8 +135,23 @@ impl Traveller for AsyncTraversal {
 }
 
 impl AsyncTraversal {
-    async fn traverse_one(workload: &Box<ArrayList>) -> u64 {
-        todo!()
+    async fn traverse_one(workload: &'static Box<ArrayList>) -> u64 {
+        let mut pre_idx: usize = 0;
+        let mut sum: u64 = 0;
+
+        for _i in 0..ARRAY_SIZE {
+            unsafe {
+                _mm_prefetch(
+                    &workload.list[pre_idx] as *const Cell as *const i8,
+                    _MM_HINT_T0,
+                );
+            }
+            MemoryAccessFuture {}.await;
+            let value = workload.list[pre_idx].get();
+            pre_idx = value as usize;
+            sum += value;
+        }
+        sum
     }
 }
 
@@ -146,12 +162,16 @@ fn benchmark(traveller: &mut impl Traveller) {
     let sum = traveller.traverse(&WORKLOADS);
     let elapsed = time_begin.elapsed().as_nanos();
 
-    assert_eq!(sum, WORKLOADS[0].ground_truth_sum() * 4);
-
     println!("{}: {} ns", traveller.get_name(), elapsed);
+    assert_eq!(sum, WORKLOADS[0].ground_truth_sum() * 4);
 }
 
 fn main() {
     let mut simple_traversal = SimpleTraversal {};
     benchmark(&mut simple_traversal);
+
+    let mut async_traversal: AsyncTraversal = AsyncTraversal {
+        executor: executor::Executor::new(),
+    };
+    benchmark(&mut async_traversal);
 }

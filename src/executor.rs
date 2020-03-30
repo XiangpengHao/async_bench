@@ -53,16 +53,34 @@ impl Executor {
         self.next_slot += 1;
     }
 
-    pub fn run_ready_task(&mut self) {
-        let cnt = 0;
+    pub fn run_ready_task(&mut self) -> u64 {
+        let mut pos: u8 = 0;
+        let mut ready_task: u8 = 0;
+        let mut total_sum: u64 = 0;
+
         loop {
-            if let Some(mut task) = self.task_queue[cnt].take() {
+            if let Some(mut task) = self.task_queue[pos as usize].take() {
                 let waker = dummy_waker();
                 let mut context = Context::from_waker(&waker);
                 match task.poll(&mut context) {
-                    Poll::Ready(_value) => {}
-                    Poll::Pending => {}
+                    Poll::Ready(sum) => {
+                        ready_task += 1;
+                        total_sum += sum;
+                    }
+                    Poll::Pending => {
+                        self.task_queue[pos as usize] = Some(task);
+                    }
                 }
+            }
+            pos += 1;
+
+            if ready_task == 4 {
+                return total_sum;
+            }
+
+            // TODO: we can avoid this branch
+            if pos == 4 {
+                pos = 0;
             }
         }
     }
@@ -79,4 +97,13 @@ fn dummy_raw_waker() -> RawWaker {
 
 fn dummy_waker() -> Waker {
     unsafe { Waker::from_raw(dummy_raw_waker()) }
+}
+
+pub struct MemoryAccessFuture {}
+
+impl Future for MemoryAccessFuture {
+    type Output = ();
+    fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
+        Poll::Ready(())
+    }
 }
