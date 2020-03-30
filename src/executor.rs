@@ -76,6 +76,7 @@ impl Executor {
             pos += 1;
 
             if ready_task == EXECUTOR_QUEUE_SIZE as u8 {
+                self.next_slot = 0;
                 return total_sum;
             }
 

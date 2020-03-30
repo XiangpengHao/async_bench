@@ -1,5 +1,4 @@
 use crate::executor::{MemoryAccessFuture, Task};
-use arr_macro::arr;
 use core::arch::x86_64::{_mm_prefetch, _MM_HINT_T0};
 use rand::seq::SliceRandom;
 use rand::thread_rng;
@@ -8,6 +7,8 @@ use std::mem;
 use std::time::Instant;
 #[macro_use]
 extern crate lazy_static;
+
+use structopt::StructOpt;
 
 pub mod executor;
 
@@ -28,12 +29,6 @@ struct Cell {
 }
 
 impl Cell {
-    fn new() -> Self {
-        Cell {
-            next_index: 0,
-            _padding: [0; 7],
-        }
-    }
     fn set(&mut self, value: u64) {
         self.next_index = value;
     }
@@ -43,7 +38,14 @@ impl Cell {
 }
 
 lazy_static! {
-    static ref WORKLOADS: [Box<ArrayList>; GROUP_SIZE] = arr![ArrayList::new(); 4];
+    static ref WORKLOADS: [Box<ArrayList>; GROUP_SIZE] = unsafe {
+        let mut data: [std::mem::MaybeUninit<Box<ArrayList>>; GROUP_SIZE] =
+            std::mem::MaybeUninit::uninit().assume_init();
+        for elem in &mut data[..] {
+            std::ptr::write(elem.as_mut_ptr(), ArrayList::new());
+        }
+        std::mem::transmute::<_, [Box<ArrayList>; GROUP_SIZE]>(data)
+    };
 }
 
 #[repr(C)]
@@ -141,6 +143,11 @@ impl Traveller for AsyncTraversal {
 }
 
 impl AsyncTraversal {
+    fn new() -> Self {
+        AsyncTraversal {
+            executor: executor::Executor::new(),
+        }
+    }
     async fn traverse_one(workload: &'static Box<ArrayList>) -> u64 {
         let mut pre_idx: usize = 0;
         let mut sum: u64 = 0;
@@ -161,34 +168,36 @@ impl AsyncTraversal {
     }
 }
 
-fn benchmark(traveller: &mut impl Traveller) {
+fn benchmark(mut traveller: impl Traveller, options: &CommandLineOptions) {
     traveller.setup();
 
-    let time_begin = Instant::now();
-    let sum = traveller.traverse(&WORKLOADS);
-    let elapsed = time_begin.elapsed().as_nanos();
+    for i in 0..options.repetition {
+        let time_begin = Instant::now();
+        let sum = traveller.traverse(&WORKLOADS);
+        let elapsed = time_begin.elapsed().as_nanos();
 
-    println!("{}: {} ns", traveller.get_name(), elapsed);
-    assert_eq!(sum, WORKLOADS[0].ground_truth_sum() * GROUP_SIZE as u64);
+        println!("{}#{}: {} ns", traveller.get_name(), i, elapsed);
+        assert_eq!(sum, WORKLOADS[0].ground_truth_sum() * GROUP_SIZE as u64);
+    }
+}
+
+#[derive(StructOpt, Debug)]
+#[structopt(name = "async_bench")]
+struct CommandLineOptions {
+    #[structopt(short, long)]
+    traveller: String,
+
+    #[structopt(short, long, default_value = "3")]
+    repetition: i32,
 }
 
 fn main() {
-    let mut simple_traversal = SimpleTraversal {};
-    benchmark(&mut simple_traversal);
-
-    let mut simple_traversal = SimpleTraversal {};
-    benchmark(&mut simple_traversal);
-
-    let mut simple_traversal = SimpleTraversal {};
-    benchmark(&mut simple_traversal);
-
-    let mut async_traversal: AsyncTraversal = AsyncTraversal {
-        executor: executor::Executor::new(),
-    };
-
-    benchmark(&mut async_traversal);
-    let mut async_traversal: AsyncTraversal = AsyncTraversal {
-        executor: executor::Executor::new(),
-    };
-    benchmark(&mut async_traversal);
+    let options = CommandLineOptions::from_args();
+    if options.traveller == "simple" {
+        let simple_traversal = SimpleTraversal {};
+        benchmark(simple_traversal, &options);
+    } else if options.traveller == "async" {
+        let async_traversal = AsyncTraversal::new();
+        benchmark(async_traversal, &options);
+    }
 }
