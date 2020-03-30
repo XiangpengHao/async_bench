@@ -12,11 +12,11 @@ extern crate lazy_static;
 pub mod executor;
 
 const ARRAY_SIZE: usize = 1024 * 1024;
-const REPETITION: usize = 4;
+const GROUP_SIZE: usize = 4;
 
 trait Traveller {
     fn setup(&mut self);
-    fn traverse(&mut self, workloads: &'static [Box<ArrayList>; REPETITION]) -> u64;
+    fn traverse(&mut self, workloads: &'static [Box<ArrayList>; GROUP_SIZE]) -> u64;
     fn get_name(&self) -> &'static str;
 }
 
@@ -43,7 +43,7 @@ impl Cell {
 }
 
 lazy_static! {
-    static ref WORKLOADS: [Box<ArrayList>; REPETITION] = arr![ArrayList::new(); 4];
+    static ref WORKLOADS: [Box<ArrayList>; GROUP_SIZE] = arr![ArrayList::new(); 4];
 }
 
 #[repr(C)]
@@ -96,11 +96,17 @@ impl ArrayList {
 struct SimpleTraversal;
 
 impl Traveller for SimpleTraversal {
-    fn traverse(&mut self, workloads: &[Box<ArrayList>; REPETITION]) -> u64 {
+    fn traverse(&mut self, workloads: &[Box<ArrayList>; GROUP_SIZE]) -> u64 {
         let mut sum: u64 = 0;
         for workload in workloads.iter() {
             let mut pre_idx = 0;
             for _i in 0..ARRAY_SIZE {
+                unsafe {
+                    _mm_prefetch(
+                        &workload.list[pre_idx] as *const Cell as *const i8,
+                        _MM_HINT_T0,
+                    );
+                }
                 let value = workload.list[pre_idx].get();
                 pre_idx = value as usize;
                 sum += value;
@@ -121,10 +127,10 @@ struct AsyncTraversal {
 impl Traveller for AsyncTraversal {
     fn setup(&mut self) {}
 
-    fn traverse(&mut self, workloads: &'static [Box<ArrayList>; REPETITION]) -> u64 {
-        for i in 0..REPETITION {
+    fn traverse(&mut self, workloads: &'static [Box<ArrayList>; GROUP_SIZE]) -> u64 {
+        for workload in workloads.iter() {
             self.executor
-                .spawn(Task::new(AsyncTraversal::traverse_one(&workloads[i])));
+                .spawn(Task::new(AsyncTraversal::traverse_one(workload)));
         }
         self.executor.run_ready_task()
     }
@@ -146,7 +152,7 @@ impl AsyncTraversal {
                     _MM_HINT_T0,
                 );
             }
-            MemoryAccessFuture {}.await;
+            MemoryAccessFuture::new().await;
             let value = workload.list[pre_idx].get();
             pre_idx = value as usize;
             sum += value;
@@ -163,13 +169,24 @@ fn benchmark(traveller: &mut impl Traveller) {
     let elapsed = time_begin.elapsed().as_nanos();
 
     println!("{}: {} ns", traveller.get_name(), elapsed);
-    assert_eq!(sum, WORKLOADS[0].ground_truth_sum() * 4);
+    assert_eq!(sum, WORKLOADS[0].ground_truth_sum() * GROUP_SIZE as u64);
 }
 
 fn main() {
     let mut simple_traversal = SimpleTraversal {};
     benchmark(&mut simple_traversal);
 
+    let mut simple_traversal = SimpleTraversal {};
+    benchmark(&mut simple_traversal);
+
+    let mut simple_traversal = SimpleTraversal {};
+    benchmark(&mut simple_traversal);
+
+    let mut async_traversal: AsyncTraversal = AsyncTraversal {
+        executor: executor::Executor::new(),
+    };
+
+    benchmark(&mut async_traversal);
     let mut async_traversal: AsyncTraversal = AsyncTraversal {
         executor: executor::Executor::new(),
     };

@@ -1,3 +1,4 @@
+use super::GROUP_SIZE;
 use core::{
     future::Future,
     pin::Pin,
@@ -5,7 +6,7 @@ use core::{
 };
 use std::default::Default;
 
-const EXECUTOR_QUEUE_SIZE: usize = 4;
+const EXECUTOR_QUEUE_SIZE: usize = GROUP_SIZE;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
 pub struct TaskId(usize);
@@ -74,12 +75,12 @@ impl Executor {
             }
             pos += 1;
 
-            if ready_task == 4 {
+            if ready_task == EXECUTOR_QUEUE_SIZE as u8 {
                 return total_sum;
             }
 
             // TODO: we can avoid this branch
-            if pos == 4 {
+            if pos == EXECUTOR_QUEUE_SIZE as u8 {
                 pos = 0;
             }
         }
@@ -99,11 +100,26 @@ fn dummy_waker() -> Waker {
     unsafe { Waker::from_raw(dummy_raw_waker()) }
 }
 
-pub struct MemoryAccessFuture {}
+pub struct MemoryAccessFuture {
+    is_first_poll: bool,
+}
+
+impl MemoryAccessFuture {
+    pub fn new() -> Self {
+        MemoryAccessFuture {
+            is_first_poll: true,
+        }
+    }
+}
 
 impl Future for MemoryAccessFuture {
     type Output = ();
-    fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
-        Poll::Ready(())
+    fn poll(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
+        if self.is_first_poll {
+            self.is_first_poll = false;
+            Poll::Pending
+        } else {
+            Poll::Ready(())
+        }
     }
 }
