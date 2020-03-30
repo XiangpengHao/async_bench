@@ -11,11 +11,11 @@ const EXECUTOR_QUEUE_SIZE: usize = 4;
 pub struct TaskId(usize);
 
 pub struct Task {
-    future: Pin<Box<dyn Future<Output = ()>>>,
+    future: Pin<Box<dyn Future<Output = u64>>>,
 }
 
 impl Task {
-    pub fn new(future: impl Future<Output = ()> + 'static) -> Task {
+    pub fn new(future: impl Future<Output = u64> + 'static) -> Task {
         Task {
             future: Box::pin(future),
         }
@@ -27,7 +27,7 @@ impl Task {
         TaskId(addr)
     }
 
-    fn poll(&mut self, context: &mut Context) -> Poll<()> {
+    fn poll(&mut self, context: &mut Context) -> Poll<u64> {
         self.future.as_mut().poll(context)
     }
 }
@@ -54,13 +54,13 @@ impl Executor {
     }
 
     pub fn run_ready_task(&mut self) {
-        let mut cnt = 0;
+        let cnt = 0;
         loop {
             if let Some(mut task) = self.task_queue[cnt].take() {
                 let waker = dummy_waker();
                 let mut context = Context::from_waker(&waker);
                 match task.poll(&mut context) {
-                    Poll::Ready(()) => {}
+                    Poll::Ready(_value) => {}
                     Poll::Pending => {}
                 }
             }

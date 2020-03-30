@@ -1,9 +1,12 @@
+use crate::executor::{Task, TaskId};
 use arr_macro::arr;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use std::alloc::{alloc, Layout};
 use std::mem;
 use std::time::Instant;
+#[macro_use]
+extern crate lazy_static;
 
 pub mod executor;
 
@@ -12,7 +15,7 @@ const REPETITION: usize = 4;
 
 trait Traveller {
     fn setup(&mut self);
-    fn traverse(&mut self, workloads: &[Box<ArrayList>; REPETITION]) -> u64;
+    fn traverse(&mut self, workloads: &'static [Box<ArrayList>; REPETITION]) -> u64;
     fn get_name(&self) -> &'static str;
 }
 
@@ -36,6 +39,10 @@ impl Cell {
     fn get(&self) -> u64 {
         self.next_index
     }
+}
+
+lazy_static! {
+    static ref WORKLOADS: [Box<ArrayList>; 4] = arr![ArrayList::new(); 4];
 }
 
 #[repr(C)]
@@ -106,12 +113,18 @@ impl Traveller for SimpleTraversal {
     fn setup(&mut self) {}
 }
 
-struct AsyncTraversal;
+struct AsyncTraversal {
+    executor: executor::Executor,
+}
 
 impl Traveller for AsyncTraversal {
     fn setup(&mut self) {}
 
-    fn traverse(&mut self, workload: &[Box<ArrayList>; REPETITION]) -> u64 {
+    fn traverse(&mut self, workloads: &'static [Box<ArrayList>; REPETITION]) -> u64 {
+        for i in 0..REPETITION {
+            self.executor
+                .spawn(Task::new(AsyncTraversal::traverse_one(&workloads[i])));
+        }
         todo!()
     }
 
@@ -121,19 +134,19 @@ impl Traveller for AsyncTraversal {
 }
 
 impl AsyncTraversal {
-    async fn traverse_one() {}
+    async fn traverse_one(workload: &Box<ArrayList>) -> u64 {
+        todo!()
+    }
 }
 
 fn benchmark(traveller: &mut impl Traveller) {
-    let workloads = arr![ArrayList::new(); 4];
-
     traveller.setup();
 
     let time_begin = Instant::now();
-    let sum = traveller.traverse(&workloads);
+    let sum = traveller.traverse(&WORKLOADS);
     let elapsed = time_begin.elapsed().as_nanos();
 
-    assert_eq!(sum, workloads[0].ground_truth_sum() * 4);
+    assert_eq!(sum, WORKLOADS[0].ground_truth_sum() * 4);
 
     println!("{}: {} ns", traveller.get_name(), elapsed);
 }
