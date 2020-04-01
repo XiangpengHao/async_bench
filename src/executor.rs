@@ -5,8 +5,20 @@ use core::{
     task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
 };
 use std::default::Default;
+extern crate lazy_static;
 
-const EXECUTOR_QUEUE_SIZE: usize = GROUP_SIZE;
+const EXECUTOR_QUEUE_SIZE: usize = 4;
+
+// lazy_static::lazy_static! {
+//     pub static ref TASK_QUEUE: [Option<Task>; EXECUTOR_QUEUE_SIZE] = unsafe {
+//         let mut data: [std::mem::MaybeUninit<Option<Task>>; EXECUTOR_QUEUE_SIZE] =
+//             std::mem::MaybeUninit::uninit().assume_init();
+//         for elem in &mut data[..] {
+//             std::ptr::write(elem.as_mut_ptr(), None);
+//         }
+//         std::mem::transmute::<_, [Option<Task>; EXECUTOR_QUEUE_SIZE]>(data)
+//     };
+// }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
 pub struct TaskId(usize);
@@ -75,7 +87,7 @@ impl Executor {
             }
             pos += 1;
 
-            if ready_task == EXECUTOR_QUEUE_SIZE as u8 {
+            if ready_task == GROUP_SIZE as u8 {
                 self.next_slot = 0;
                 return total_sum;
             }
@@ -99,28 +111,4 @@ fn dummy_raw_waker() -> RawWaker {
 
 fn dummy_waker() -> Waker {
     unsafe { Waker::from_raw(dummy_raw_waker()) }
-}
-
-pub struct MemoryAccessFuture {
-    is_first_poll: bool,
-}
-
-impl MemoryAccessFuture {
-    pub fn new() -> Self {
-        MemoryAccessFuture {
-            is_first_poll: true,
-        }
-    }
-}
-
-impl Future for MemoryAccessFuture {
-    type Output = ();
-    fn poll(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
-        if self.is_first_poll {
-            self.is_first_poll = false;
-            Poll::Pending
-        } else {
-            Poll::Ready(())
-        }
-    }
 }
