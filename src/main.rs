@@ -6,9 +6,6 @@ use core::{
     task::{Context, Poll},
 };
 use std::time::Instant;
-#[macro_use]
-extern crate lazy_static;
-
 use structopt::StructOpt;
 use workloads::{ArrayList, Cell, ARRAY_SIZE};
 
@@ -17,16 +14,6 @@ pub mod workloads;
 
 const GROUP_SIZE: usize = 4;
 
-lazy_static! {
-    pub static ref WORKLOADS: [Box<ArrayList>; GROUP_SIZE] = unsafe {
-        let mut data: [std::mem::MaybeUninit<Box<ArrayList>>; GROUP_SIZE] =
-            std::mem::MaybeUninit::uninit().assume_init();
-        for elem in &mut data[..] {
-            std::ptr::write(elem.as_mut_ptr(), ArrayList::new());
-        }
-        std::mem::transmute::<_, [Box<ArrayList>; GROUP_SIZE]>(data)
-    };
-}
 trait Traveller<'a> {
     fn setup(&mut self);
     fn traverse(&mut self, workloads: &'a [Box<ArrayList>; GROUP_SIZE]) -> u64;
@@ -56,30 +43,6 @@ impl<'a> Traveller<'a> for SimpleTraversal {
 
 struct AsyncTraversal<'a> {
     executor: executor::Executor<'a>,
-}
-
-pub struct MemoryAccessFuture {
-    is_first_poll: bool,
-}
-
-impl MemoryAccessFuture {
-    pub fn new() -> Self {
-        MemoryAccessFuture {
-            is_first_poll: true,
-        }
-    }
-}
-
-impl Future for MemoryAccessFuture {
-    type Output = ();
-    fn poll(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
-        if self.is_first_poll {
-            self.is_first_poll = false;
-            Poll::Pending
-        } else {
-            Poll::Ready(())
-        }
-    }
 }
 
 impl<'a> Traveller<'a> for AsyncTraversal<'a> {
@@ -125,6 +88,30 @@ impl<'a> AsyncTraversal<'a> {
     }
 }
 
+pub struct MemoryAccessFuture {
+    is_first_poll: bool,
+}
+
+impl MemoryAccessFuture {
+    pub fn new() -> Self {
+        MemoryAccessFuture {
+            is_first_poll: true,
+        }
+    }
+}
+
+impl Future for MemoryAccessFuture {
+    type Output = ();
+    fn poll(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
+        if self.is_first_poll {
+            self.is_first_poll = false;
+            Poll::Pending
+        } else {
+            Poll::Ready(())
+        }
+    }
+}
+
 fn benchmark<'a>(
     workloads: &'a [Box<ArrayList>; GROUP_SIZE],
     mut traveller: impl Traveller<'a>,
@@ -138,7 +125,7 @@ fn benchmark<'a>(
         let elapsed = time_begin.elapsed().as_nanos();
 
         println!("{}#{}: {} ns", traveller.get_name(), i, elapsed);
-        assert_eq!(sum, WORKLOADS[0].ground_truth_sum() * GROUP_SIZE as u64);
+        assert_eq!(sum, workloads[0].ground_truth_sum() * GROUP_SIZE as u64);
     }
 }
 
