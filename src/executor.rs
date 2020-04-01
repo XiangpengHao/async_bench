@@ -9,26 +9,15 @@ extern crate lazy_static;
 
 const EXECUTOR_QUEUE_SIZE: usize = 4;
 
-// lazy_static::lazy_static! {
-//     pub static ref TASK_QUEUE: [Option<Task>; EXECUTOR_QUEUE_SIZE] = unsafe {
-//         let mut data: [std::mem::MaybeUninit<Option<Task>>; EXECUTOR_QUEUE_SIZE] =
-//             std::mem::MaybeUninit::uninit().assume_init();
-//         for elem in &mut data[..] {
-//             std::ptr::write(elem.as_mut_ptr(), None);
-//         }
-//         std::mem::transmute::<_, [Option<Task>; EXECUTOR_QUEUE_SIZE]>(data)
-//     };
-// }
-
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
 pub struct TaskId(usize);
 
-pub struct Task {
-    future: Pin<Box<dyn Future<Output = u64>>>,
+pub struct Task<'inner> {
+    future: Pin<Box<dyn Future<Output = u64> + 'inner>>,
 }
 
-impl Task {
-    pub fn new(future: impl Future<Output = u64> + 'static) -> Task {
+impl<'inner> Task<'inner> {
+    pub fn new(future: impl Future<Output = u64> + 'inner) -> Task<'inner> {
         Task {
             future: Box::pin(future),
         }
@@ -45,12 +34,12 @@ impl Task {
     }
 }
 
-pub struct Executor {
-    task_queue: [Option<Task>; EXECUTOR_QUEUE_SIZE],
+pub struct Executor<'a> {
+    task_queue: [Option<Task<'a>>; EXECUTOR_QUEUE_SIZE],
     next_slot: u16,
 }
 
-impl Executor {
+impl<'a> Executor<'a> {
     pub fn new() -> Self {
         Executor {
             task_queue: Default::default(),
@@ -58,7 +47,7 @@ impl Executor {
         }
     }
 
-    pub fn spawn(&mut self, task: Task) {
+    pub fn spawn(&mut self, task: Task<'a>) {
         if self.next_slot as usize == EXECUTOR_QUEUE_SIZE {
             panic!("max executor queue reached!");
         }

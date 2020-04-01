@@ -27,15 +27,15 @@ lazy_static! {
         std::mem::transmute::<_, [Box<ArrayList>; GROUP_SIZE]>(data)
     };
 }
-trait Traveller {
+trait Traveller<'a> {
     fn setup(&mut self);
-    fn traverse(&mut self, workloads: &[Box<ArrayList>; GROUP_SIZE]) -> u64;
+    fn traverse(&mut self, workloads: &'a [Box<ArrayList>; GROUP_SIZE]) -> u64;
     fn get_name(&self) -> &'static str;
 }
 
 struct SimpleTraversal;
 
-impl Traveller for SimpleTraversal {
+impl<'a> Traveller<'a> for SimpleTraversal {
     fn traverse(&mut self, workloads: &[Box<ArrayList>; GROUP_SIZE]) -> u64 {
         let mut sum: u64 = 0;
         for workload in workloads.iter() {
@@ -54,8 +54,8 @@ impl Traveller for SimpleTraversal {
     fn setup(&mut self) {}
 }
 
-struct AsyncTraversal {
-    executor: executor::Executor,
+struct AsyncTraversal<'a> {
+    executor: executor::Executor<'a>,
 }
 
 pub struct MemoryAccessFuture {
@@ -82,10 +82,10 @@ impl Future for MemoryAccessFuture {
     }
 }
 
-impl Traveller for AsyncTraversal {
+impl<'a> Traveller<'a> for AsyncTraversal<'a> {
     fn setup(&mut self) {}
 
-    fn traverse(&mut self, workloads: &[Box<ArrayList>; GROUP_SIZE]) -> u64 {
+    fn traverse(&mut self, workloads: &'a [Box<ArrayList>; GROUP_SIZE]) -> u64 {
         for workload in workloads.iter() {
             self.executor
                 .spawn(Task::new(AsyncTraversal::traverse_one(workload)));
@@ -98,14 +98,14 @@ impl Traveller for AsyncTraversal {
     }
 }
 
-impl AsyncTraversal {
+impl<'a> AsyncTraversal<'a> {
     fn new() -> Self {
         AsyncTraversal {
             executor: executor::Executor::new(),
         }
     }
 
-    async fn traverse_one(workload: &'_ Box<ArrayList>) -> u64 {
+    async fn traverse_one(workload: &Box<ArrayList>) -> u64 {
         let mut pre_idx: usize = 0;
         let mut sum: u64 = 0;
 
@@ -125,16 +125,11 @@ impl AsyncTraversal {
     }
 }
 
-fn benchmark(mut traveller: impl Traveller, options: &CommandLineOptions) {
-    let workloads: [Box<ArrayList>; GROUP_SIZE] = unsafe {
-        let mut data: [std::mem::MaybeUninit<Box<ArrayList>>; GROUP_SIZE] =
-            std::mem::MaybeUninit::uninit().assume_init();
-        for elem in &mut data[..] {
-            std::ptr::write(elem.as_mut_ptr(), ArrayList::new());
-        }
-        std::mem::transmute::<_, [Box<ArrayList>; GROUP_SIZE]>(data)
-    };
-
+fn benchmark<'a>(
+    workloads: &'a [Box<ArrayList>; GROUP_SIZE],
+    mut traveller: impl Traveller<'a>,
+    options: &CommandLineOptions,
+) {
     traveller.setup();
 
     for i in 0..options.repetition {
@@ -160,11 +155,20 @@ struct CommandLineOptions {
 fn main() {
     let options = CommandLineOptions::from_args();
 
+    let workloads: [Box<ArrayList>; GROUP_SIZE] = unsafe {
+        let mut data: [std::mem::MaybeUninit<Box<ArrayList>>; GROUP_SIZE] =
+            std::mem::MaybeUninit::uninit().assume_init();
+        for elem in &mut data[..] {
+            std::ptr::write(elem.as_mut_ptr(), ArrayList::new());
+        }
+        std::mem::transmute::<_, [Box<ArrayList>; GROUP_SIZE]>(data)
+    };
+
     if options.traveller == "sync" {
         let traveller = SimpleTraversal {};
-        benchmark(traveller, &options);
+        benchmark(&workloads, traveller, &options);
     } else if options.traveller == "async" {
         let traveller: AsyncTraversal = AsyncTraversal::new();
-        benchmark(traveller, &options);
+        benchmark(&workloads, traveller, &options);
     }
 }
