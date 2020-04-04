@@ -1,119 +1,22 @@
-use crate::executor::Task;
-use core::arch::x86_64::{_mm_prefetch, _MM_HINT_T0};
-use core::{
-    future::Future,
-    pin::Pin,
-    task::{Context, Poll},
-};
 use std::time::Instant;
 use structopt::StructOpt;
-use workloads::{ArrayList, Cell, ARRAY_SIZE};
+use travellers::{AsyncTraversal, SimpleTraversal, Traveller};
+use workloads::{ArrayList, Cell};
 
 pub mod executor;
+pub mod travellers;
 pub mod workloads;
+
+#[cfg(test)]
+extern crate quickcheck;
+#[cfg(test)]
+#[macro_use(quickcheck)]
+extern crate quickcheck_macros;
 
 const GROUP_SIZE: usize = 4;
 
-trait Traveller<'a> {
-    fn setup(&mut self);
-    fn traverse(&mut self, workloads: &'a [Box<ArrayList>; GROUP_SIZE]) -> u64;
-    fn get_name(&self) -> &'static str;
-}
-
-struct SimpleTraversal;
-
-impl<'a> Traveller<'a> for SimpleTraversal {
-    fn traverse(&mut self, workloads: &[Box<ArrayList>; GROUP_SIZE]) -> u64 {
-        let mut sum: u64 = 0;
-        for workload in workloads.iter() {
-            let mut pre_idx = 0;
-            for _i in 0..ARRAY_SIZE {
-                let value = workload.list[pre_idx].get();
-                pre_idx = value as usize;
-                sum += value;
-            }
-        }
-        sum
-    }
-    fn get_name(&self) -> &'static str {
-        "SimpleTraversal"
-    }
-    fn setup(&mut self) {}
-}
-
-struct AsyncTraversal<'a> {
-    executor: executor::Executor<'a>,
-}
-
-impl<'a> Traveller<'a> for AsyncTraversal<'a> {
-    fn setup(&mut self) {}
-
-    fn traverse(&mut self, workloads: &'a [Box<ArrayList>; GROUP_SIZE]) -> u64 {
-        for workload in workloads.iter() {
-            self.executor
-                .spawn(Task::new(AsyncTraversal::traverse_one(workload)));
-        }
-        self.executor.run_ready_task()
-    }
-
-    fn get_name(&self) -> &'static str {
-        "AsyncTraversal"
-    }
-}
-
-impl<'a> AsyncTraversal<'a> {
-    fn new() -> Self {
-        AsyncTraversal {
-            executor: executor::Executor::new(),
-        }
-    }
-
-    async fn traverse_one(workload: &Box<ArrayList>) -> u64 {
-        let mut pre_idx: usize = 0;
-        let mut sum: u64 = 0;
-
-        for _i in 0..ARRAY_SIZE {
-            unsafe {
-                _mm_prefetch(
-                    &workload.list[pre_idx] as *const Cell as *const i8,
-                    _MM_HINT_T0,
-                );
-            }
-            MemoryAccessFuture::new().await;
-            let value = workload.list[pre_idx].get();
-            pre_idx = value as usize;
-            sum += value;
-        }
-        sum
-    }
-}
-
-pub struct MemoryAccessFuture {
-    is_first_poll: bool,
-}
-
-impl MemoryAccessFuture {
-    pub fn new() -> Self {
-        MemoryAccessFuture {
-            is_first_poll: true,
-        }
-    }
-}
-
-impl Future for MemoryAccessFuture {
-    type Output = ();
-    fn poll(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
-        if self.is_first_poll {
-            self.is_first_poll = false;
-            Poll::Pending
-        } else {
-            Poll::Ready(())
-        }
-    }
-}
-
 fn benchmark<'a>(
-    workloads: &'a [Box<ArrayList>; GROUP_SIZE],
+    workloads: &'a [ArrayList; GROUP_SIZE],
     mut traveller: impl Traveller<'a>,
     options: &CommandLineOptions,
 ) {
@@ -137,18 +40,24 @@ struct CommandLineOptions {
 
     #[structopt(short, long, default_value = "3")]
     repetition: i32,
+
+    #[structopt(short, long, default_value = "1048576")]
+    array_size: i32,
 }
 
 fn main() {
     let options = CommandLineOptions::from_args();
 
-    let workloads: [Box<ArrayList>; GROUP_SIZE] = unsafe {
-        let mut data: [std::mem::MaybeUninit<Box<ArrayList>>; GROUP_SIZE] =
+    let workloads: [ArrayList; GROUP_SIZE] = unsafe {
+        let mut data: [std::mem::MaybeUninit<ArrayList>; GROUP_SIZE] =
             std::mem::MaybeUninit::uninit().assume_init();
         for elem in &mut data[..] {
-            std::ptr::write(elem.as_mut_ptr(), ArrayList::new());
+            std::ptr::write(
+                elem.as_mut_ptr(),
+                ArrayList::new(options.array_size as usize),
+            );
         }
-        std::mem::transmute::<_, [Box<ArrayList>; GROUP_SIZE]>(data)
+        std::mem::transmute::<_, [ArrayList; GROUP_SIZE]>(data)
     };
 
     if options.traveller == "sync" {
