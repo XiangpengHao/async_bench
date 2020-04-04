@@ -111,6 +111,51 @@ impl Future for MemoryAccessFuture {
 
 #[cfg(test)]
 mod tests {
+    use crate::{ArrayList, AsyncTraversal, SimpleTraversal, Traveller};
+
     #[quickcheck]
-    fn simple_traversal_is_correct() {}
+    fn simple_traversal_is_correct(array_size: u8) -> bool {
+        if array_size == 0 {
+            return true;
+        }
+        let workloads = [
+            ArrayList::new(array_size as usize),
+            ArrayList::new(array_size as usize),
+            ArrayList::new(array_size as usize),
+            ArrayList::new(array_size as usize),
+        ];
+        let workload_sum = {
+            let mut total_sum = 0;
+            for workload in workloads.iter() {
+                total_sum += workload.ground_truth_sum();
+            }
+            total_sum
+        };
+
+        let mut traveller = SimpleTraversal {};
+        let sum = traveller.traverse(&workloads);
+
+        sum == workload_sum
+    }
+
+    #[quickcheck]
+    fn async_traversal_yield_same_as_simple(array_size: u8) -> bool {
+        if array_size == 0 {
+            return true;
+        }
+        let workloads = [
+            ArrayList::new(array_size as usize),
+            ArrayList::new(array_size as usize),
+            ArrayList::new(array_size as usize),
+            ArrayList::new(array_size as usize),
+        ];
+
+        let mut sync_traveller = SimpleTraversal {};
+        let sync_sum = sync_traveller.traverse(&workloads);
+
+        let mut async_traveller = AsyncTraversal::new();
+        let async_sum = async_traveller.traverse(&workloads);
+
+        sync_sum == async_sum
+    }
 }
