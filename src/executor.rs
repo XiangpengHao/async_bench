@@ -36,26 +36,26 @@ impl<'inner> Task<'inner> {
 
 pub struct Executor<'a> {
     task_queue: [Option<Task<'a>>; EXECUTOR_QUEUE_SIZE],
-    next_slot: u16,
 }
 
 impl<'a> Executor<'a> {
     pub fn new() -> Self {
         Executor {
             task_queue: Default::default(),
-            next_slot: 0,
         }
     }
 
     pub fn spawn(&mut self, task: Task<'a>) {
-        if self.next_slot as usize == EXECUTOR_QUEUE_SIZE {
-            panic!("max executor queue reached!");
+        for i in 0..EXECUTOR_QUEUE_SIZE {
+            if self.task_queue[i].is_none() {
+                self.task_queue[i] = Some(task);
+                return;
+            }
         }
-        self.task_queue[self.next_slot as usize] = Some(task);
-        self.next_slot += 1;
+        panic!("max executor queue reached!");
     }
 
-    pub fn run_ready_task(&mut self) -> u64 {
+    pub fn run_ready_tasks(&mut self) -> u64 {
         let mut pos: u8 = 0;
         let mut ready_task: u8 = 0;
         let mut total_sum: u64 = 0;
@@ -77,7 +77,6 @@ impl<'a> Executor<'a> {
             pos += 1;
 
             if ready_task == GROUP_SIZE as u8 {
-                self.next_slot = 0;
                 return total_sum;
             }
 
