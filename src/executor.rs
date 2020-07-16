@@ -1,51 +1,27 @@
-use super::GROUP_SIZE;
 use core::{
     future::Future,
     pin::Pin,
     task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
 };
-use std::default::Default;
-extern crate lazy_static;
+use std::mem::{self, MaybeUninit};
 
 const EXECUTOR_QUEUE_SIZE: usize = 4;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
 pub struct TaskId(usize);
 
-pub struct Task<'inner> {
-    future: Pin<Box<dyn Future<Output = u64> + 'inner>>,
+pub struct Executor<F, const N: usize> {
+    task_queue: [Option<F>; N],
 }
 
-impl<'inner> Task<'inner> {
-    pub fn new(future: impl Future<Output = u64> + 'inner) -> Task<'inner> {
-        Task {
-            future: Box::pin(future),
-        }
-    }
-
-    pub fn id(&self) -> TaskId {
-        use core::ops::Deref;
-        let addr = Pin::deref(&self.future) as *const _ as *const () as usize;
-        TaskId(addr)
-    }
-
-    fn poll(&mut self, context: &mut Context) -> Poll<u64> {
-        self.future.as_mut().poll(context)
-    }
-}
-
-pub struct Executor<'a> {
-    task_queue: [Option<Task<'a>>; EXECUTOR_QUEUE_SIZE],
-}
-
-impl<'a> Executor<'a> {
+impl<F: Future, const N: usize> Executor<F, N> {
     pub fn new() -> Self {
         Executor {
-            task_queue: Default::default(),
+            task_queue: [None; N],
         }
     }
 
-    pub fn spawn(&mut self, task: Task<'a>) {
+    pub fn spawn(&mut self, task: F) {
         for i in 0..EXECUTOR_QUEUE_SIZE {
             if self.task_queue[i].is_none() {
                 self.task_queue[i] = Some(task);
@@ -55,35 +31,33 @@ impl<'a> Executor<'a> {
         panic!("max executor queue reached!");
     }
 
-    pub fn run_ready_tasks(&mut self) -> u64 {
-        let mut pos: u8 = 0;
+    pub fn run_ready_tasks(&mut self) -> [F::Output; N] {
+        let mut pos: usize = 0;
         let mut ready_task: u8 = 0;
-        let mut total_sum: u64 = 0;
+        let mut output: [MaybeUninit<F::Output>; N] =
+            unsafe { MaybeUninit::uninit().assume_init() };
+
+        let waker = dummy_waker();
+        let mut context = Context::from_waker(&waker);
 
         loop {
-            if let Some(mut task) = self.task_queue[pos as usize].take() {
-                let waker = dummy_waker();
-                let mut context = Context::from_waker(&waker);
-                match task.poll(&mut context) {
-                    Poll::Ready(sum) => {
-                        ready_task += 1;
-                        total_sum += sum;
-                    }
-                    Poll::Pending => {
-                        self.task_queue[pos as usize] = Some(task);
-                    }
+            if let Some(task) = self.task_queue[pos as usize].as_mut() {
+                let pinned_task = unsafe { Pin::new_unchecked(task) };
+                if let Poll::Ready(sum) = pinned_task.poll(&mut context) {
+                    ready_task += 1;
+                    output[pos] = MaybeUninit::new(sum);
+                    self.task_queue[pos] = None;
                 }
             }
             pos += 1;
 
-            if ready_task == GROUP_SIZE as u8 {
-                return total_sum;
+            if ready_task == N as u8 {
+                let ret = unsafe { mem::transmute_copy(&output) };
+                mem::forget(output);
+                return ret;
             }
 
-            // TODO: we can avoid this branch
-            if pos == EXECUTOR_QUEUE_SIZE as u8 {
-                pos = 0;
-            }
+            pos = pos % N;
         }
     }
 }

@@ -1,3 +1,7 @@
+#![feature(const_generics)]
+#![feature(const_in_array_repeat_expressions)]
+
+use std::rc::Rc;
 use std::time::Instant;
 use structopt::StructOpt;
 use travellers::{AsyncTraversal, SimpleTraversal, Traveller};
@@ -15,13 +19,11 @@ extern crate quickcheck_macros;
 
 const GROUP_SIZE: usize = 4;
 
-fn benchmark<'a>(
-    workloads: &'a [ArrayList; GROUP_SIZE],
-    mut traveller: impl Traveller<'a>,
+fn benchmark(
+    workloads: Vec<Rc<ArrayList>>,
+    traveller: impl Traveller,
     options: &CommandLineOptions,
 ) {
-    traveller.setup();
-
     for i in 0..options.repetition {
         let time_begin = Instant::now();
         let sum = traveller.traverse(&workloads);
@@ -48,23 +50,19 @@ struct CommandLineOptions {
 fn main() {
     let options = CommandLineOptions::from_args();
 
-    let workloads: [ArrayList; GROUP_SIZE] = unsafe {
-        let mut data: [std::mem::MaybeUninit<ArrayList>; GROUP_SIZE] =
-            std::mem::MaybeUninit::uninit().assume_init();
-        for elem in &mut data[..] {
-            std::ptr::write(
-                elem.as_mut_ptr(),
-                ArrayList::new(options.array_size as usize),
-            );
-        }
-        std::mem::transmute::<_, [ArrayList; GROUP_SIZE]>(data)
-    };
+    let workloads: Vec<Rc<ArrayList>> = [0; GROUP_SIZE]
+        .iter()
+        .map(|_| {
+            let list = ArrayList::new(options.array_size as usize);
+            Rc::new(list)
+        })
+        .collect::<Vec<Rc<ArrayList>>>();
 
     if options.traveller == "sync" {
         let traveller = SimpleTraversal {};
-        benchmark(&workloads, traveller, &options);
+        benchmark(workloads, traveller, &options);
     } else if options.traveller == "async" {
-        let traveller: AsyncTraversal = AsyncTraversal::new();
-        benchmark(&workloads, traveller, &options);
+        let traveller = AsyncTraversal {};
+        benchmark(workloads, traveller, &options);
     }
 }

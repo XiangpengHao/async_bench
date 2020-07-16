@@ -1,8 +1,9 @@
 use crate::{
-    executor::{self, Task},
+    executor::{self},
     ArrayList, Cell, GROUP_SIZE,
 };
 use core::arch::x86_64::{_mm_prefetch, _MM_HINT_T0};
+use std::rc::Rc;
 use std::{
     future::Future,
     pin::Pin,
@@ -11,16 +12,15 @@ use std::{
 
 extern crate quickcheck;
 
-pub trait Traveller<'a> {
-    fn setup(&mut self);
-    fn traverse(&mut self, workloads: &'a [ArrayList; GROUP_SIZE]) -> u64;
+pub trait Traveller {
+    fn traverse(&self, workloads: &[Rc<ArrayList>]) -> u64;
     fn get_name(&self) -> &'static str;
 }
 
 pub struct SimpleTraversal;
 
-impl<'a> Traveller<'a> for SimpleTraversal {
-    fn traverse(&mut self, workloads: &[ArrayList; GROUP_SIZE]) -> u64 {
+impl Traveller for SimpleTraversal {
+    fn traverse(&self, workloads: &[Rc<ArrayList>]) -> u64 {
         let mut sum: u64 = 0;
         for workload in workloads.iter() {
             let mut pre_idx = 0;
@@ -35,22 +35,17 @@ impl<'a> Traveller<'a> for SimpleTraversal {
     fn get_name(&self) -> &'static str {
         "SimpleTraversal"
     }
-    fn setup(&mut self) {}
 }
 
-pub struct AsyncTraversal<'a> {
-    executor: executor::Executor<'a>,
-}
+pub struct AsyncTraversal;
 
-impl<'a> Traveller<'a> for AsyncTraversal<'a> {
-    fn setup(&mut self) {}
-
-    fn traverse(&mut self, workloads: &'a [ArrayList; GROUP_SIZE]) -> u64 {
+impl Traveller for AsyncTraversal {
+    fn traverse(&self, workloads: &[Rc<ArrayList>]) -> u64 {
+        let mut executor = executor::Executor::<_, GROUP_SIZE>::new();
         for workload in workloads.iter() {
-            self.executor
-                .spawn(Task::new(AsyncTraversal::traverse_one(workload)));
+            executor.spawn(AsyncTraversal::traverse_one(workload.clone()));
         }
-        self.executor.run_ready_tasks()
+        executor.run_ready_tasks().iter().sum()
     }
 
     fn get_name(&self) -> &'static str {
@@ -58,14 +53,8 @@ impl<'a> Traveller<'a> for AsyncTraversal<'a> {
     }
 }
 
-impl<'a> AsyncTraversal<'a> {
-    pub fn new() -> Self {
-        AsyncTraversal {
-            executor: executor::Executor::new(),
-        }
-    }
-
-    async fn traverse_one(workload: &ArrayList) -> u64 {
+impl AsyncTraversal {
+    async fn traverse_one(workload: Rc<ArrayList>) -> u64 {
         let mut pre_idx: usize = 0;
         let mut sum: u64 = 0;
 
@@ -145,19 +134,21 @@ impl Future for MemoryPrefetchFuture {
 
 #[cfg(test)]
 mod tests {
-    use crate::{ArrayList, AsyncTraversal, SimpleTraversal, Traveller};
+    use super::*;
 
     #[quickcheck]
     fn simple_traversal_is_correct(array_size: u8) -> bool {
         if array_size == 0 {
             return true;
         }
-        let workloads = [
-            ArrayList::new(array_size as usize),
-            ArrayList::new(array_size as usize),
-            ArrayList::new(array_size as usize),
-            ArrayList::new(array_size as usize),
-        ];
+        let workloads: Vec<Rc<ArrayList>> = [0; GROUP_SIZE]
+            .iter()
+            .map(|_| {
+                let list = ArrayList::new(array_size as usize);
+                Rc::new(list)
+            })
+            .collect();
+
         let workload_sum = {
             let mut total_sum = 0;
             for workload in workloads.iter() {
@@ -166,7 +157,7 @@ mod tests {
             total_sum
         };
 
-        let mut traveller = SimpleTraversal {};
+        let traveller = SimpleTraversal {};
         let sum = traveller.traverse(&workloads);
 
         sum == workload_sum
@@ -177,17 +168,18 @@ mod tests {
         if array_size == 0 {
             return true;
         }
-        let workloads = [
-            ArrayList::new(array_size as usize),
-            ArrayList::new(array_size as usize),
-            ArrayList::new(array_size as usize),
-            ArrayList::new(array_size as usize),
-        ];
+        let workloads: Vec<Rc<ArrayList>> = [0; GROUP_SIZE]
+            .iter()
+            .map(|_| {
+                let list = ArrayList::new(array_size as usize);
+                Rc::new(list)
+            })
+            .collect();
 
-        let mut sync_traveller = SimpleTraversal {};
+        let sync_traveller = SimpleTraversal {};
         let sync_sum = sync_traveller.traverse(&workloads);
 
-        let mut async_traveller = AsyncTraversal::new();
+        let async_traveller = AsyncTraversal {};
         let async_sum = async_traveller.traverse(&workloads);
 
         sync_sum == async_sum
