@@ -1,6 +1,3 @@
-#![feature(const_generics)]
-#![feature(const_in_array_repeat_expressions)]
-
 use std::rc::Rc;
 use std::time::Instant;
 use structopt::StructOpt;

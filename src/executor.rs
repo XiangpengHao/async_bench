@@ -15,9 +15,10 @@ pub struct Executor<F, const N: usize> {
 }
 
 impl<F: Future, const N: usize> Executor<F, N> {
+    const SAMPLE: Option<F> = None;
     pub fn new() -> Self {
         Executor {
-            task_queue: [None; N],
+            task_queue: [Self::SAMPLE; N],
         }
     }
 
